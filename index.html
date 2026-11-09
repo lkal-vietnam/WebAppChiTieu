@@ -265,6 +265,7 @@ body.cover #app,body.cover nav{filter:blur(24px)}
 <div id="dlg"></div>
 <div id="lock"></div>
 <div id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="ocr-file" accept="image/*" hidden>
 <input type="file" id="restore" accept=".json,application/json" hidden>
 
 <script>
@@ -454,12 +455,48 @@ function openForm(id,rec){
 }
 function rankCats(type){const c={};live().filter(t=>t.type===type).forEach(t=>c[t.cat]=(c[t.cat]||0)+1);return [...cats(type)].sort((a,b)=>(c[b.n]||0)-(c[a.n]||0))}
 let savedYM=null;
+/* ---------- Điền từ ảnh bill / chuyển khoản (OCR ngay trên máy) ---------- */
+let bankP=null;
+const loadBank=()=>bankP||(bankP=new Promise((ok,no)=>{if(window.BankOCR)return ok();const sc=document.createElement('script');sc.src='ocr/bank.js';sc.onload=ok;sc.onerror=()=>{bankP=null;no(new Error('Không tải được bộ đọc ảnh. Cần có mạng ở lần đầu.'))};document.head.appendChild(sc)}));
+function ocrBox(){
+  const o=fm.ocr||{};
+  return `<button class="btn" data-act="ocr"${o.busy?' disabled':''}>📷 Điền từ ảnh bill / chuyển khoản</button>
+  <div class="hint" id="ocr-st" role="status">${esc(o.msg||'Ảnh được đọc ngay trên máy, không gửi đi đâu.')}</div>
+  ${(o.warn||[]).map(w=>`<div class="hint" style="color:var(--exp)">⚠️ ${esc(w)}</div>`).join('')}
+  ${o.items?`<div class="chips">${o.items.map((it,i)=>`<button class="chip" data-act="ocrPick" data-v="${i}">${it.date?it.date.slice(8)+'/'+it.date.slice(5,7):'?'} · ${it.type==='income'?'+':'−'}${fmt(it.amount)} · ${esc(it.note||'')}</button>`).join('')}</div>`:''}`;
+}
+function ocrMsg(m,busy){if(!fm)return;fm.ocr=Object.assign(fm.ocr||{},{msg:m,busy:!!busy});const e=$('#ocr-st');if(e)e.textContent=m;const b=$('#panel [data-act=ocr]');if(b)b.disabled=!!busy}
+function applyOcr(r){
+  const names=t=>cats(t).map(c=>c.n);
+  fm.type=r.type;fm.amount=r.amount||0;if(r.date)fm.date=r.date;fm.note=r.note||'';
+  const key=(r.note||'').trim().toLowerCase();
+  const prev=key&&live().find(t=>t.type===r.type&&(t.note||'').trim().toLowerCase()===key&&names(r.type).includes(t.cat));
+  fm.cat=prev?prev.cat:BankOCR.guessCat(r.hay||r.raw||r.note||'',r.type,names(r.type));
+  const bank=S.set.wallets.find(w=>/ngan hang|bank|the |card/.test(BankOCR.fold(w.n)));if(bank)fm.wallet=bank.n;
+  const warn=[...(r.warn||[])];
+  if(r.amount&&r.date&&live().some(t=>t.date===r.date&&t.amount===r.amount))warn.push('Đã có giao dịch cùng ngày và số tiền này, hãy kiểm tra để tránh ghi trùng.');
+  fm.ocr=Object.assign(fm.ocr||{},{busy:false,warn,items:null,msg:r.amount?(fm.cat?'Đã điền. Kiểm tra lại rồi bấm Lưu.':'Đã điền số tiền. Hãy chọn danh mục.'):'Chưa đọc được số tiền, hãy nhập tay.'});
+  renderForm();
+}
+async function runOcr(file){
+  if(!fm||!file)return;
+  try{
+    ocrMsg('Đang chuẩn bị…',1);await loadBank();
+    const text=await BankOCR.read(file,m=>ocrMsg(m,1));
+    const r=BankOCR.parse(text);
+    if(r.mode==='list'){
+      if(!r.items.length)throw new Error('Không thấy giao dịch nào trong ảnh.');
+      fm.ocr=Object.assign(fm.ocr||{},{busy:false,warn:[],items:r.items,msg:'Ảnh có nhiều giao dịch. Chạm vào giao dịch muốn ghi:'});renderForm();
+    }else applyOcr(r);
+  }catch(e){ocrMsg('Không đọc được ảnh: '+(e&&e.message||e),0);toast('Không đọc được ảnh')}
+}
 function renderForm(){
   const isRec=fm.mode==='rec',all=rankCats(fm.type),N=8,old=$('#panel .pbody'),st=old?old.scrollTop:0;
   let shown=fm.showAll?all:all.slice(0,N);
   if(!fm.showAll&&fm.cat&&!shown.some(c=>c.n===fm.cat)){const sel=all.find(c=>c.n===fm.cat);if(sel)shown=[...shown.slice(0,N-1),sel]}
   $('#panel').innerHTML=`<div class="grab"></div><div class="pbody">
   ${isRec?'<b>Giao dịch định kỳ hàng tháng</b>':''}
+  ${(!isRec&&!fm.id)?ocrBox():''}
   <div class="seg"><button class="${fm.type==='expense'?'on exp':''}" data-act="ftype" data-v="expense">Chi tiêu</button><button class="${fm.type==='income'?'on inc':''}" data-act="ftype" data-v="income">Thu nhập</button></div>
   <div class="amtwrap"><input id="f-amt" class="big ${fm.type}" inputmode="numeric" placeholder="0" autocomplete="off" value="${fm.amount?fmt(fm.amount):''}"><span class="cur">₫</span></div>
   <div class="qk">${['000','+10k','+50k','+100k','+500k'].map(k=>`<button class="chip q" data-act="amtq" data-v="${k}">${k}</button>`).join('')}</div>
@@ -582,6 +619,8 @@ document.addEventListener('click',async e=>{
     case 'rp':ui.rp=v;render('q');break;
     case 'rprev':case 'rnext':{const s=shiftP(ui.rp,ui.ry,ui.rm,a==='rprev'?-1:1);ui.ry=s.y;ui.rm=s.m;render('q');break}
     case 'closeForm':closeForm();break;
+    case 'ocr':$('#ocr-file').click();break;
+    case 'ocrPick':{const it=fm&&fm.ocr&&fm.ocr.items&&fm.ocr.items[+v];if(it)applyOcr(it);break}
     case 'fall':fm.showAll=!fm.showAll;renderForm();break;
     case 'amtq':{const q={'+10k':1e4,'+50k':5e4,'+100k':1e5,'+500k':5e5};fm.amount=v==='000'?fm.amount*1000:fm.amount+q[v];fm.amount=Math.min(fm.amount,999999999999);const i=$('#f-amt');if(i)i.value=fm.amount?fmt(fm.amount):'';break}
     case 'cm':{ui.cm=v;const c=$('#chartCard');if(c){c.innerHTML=chartInner();c.classList.remove('anim');void c.offsetWidth;c.classList.add('anim')}break}
@@ -623,6 +662,7 @@ document.addEventListener('change',e=>{
   else if(t.id==='f-day')fm.day=+t.value||1;
   else if(t.id==='p0'||t.id==='p1'){S.set.people[+t.id[1]]=t.value.trim()||(t.id==='p0'?'Chồng':'Vợ');touchSet()}
   else if(t.id==='sy-url'||t.id==='sy-sec'){localStorage.setItem(SYNCKEY,JSON.stringify({url:$('#sy-url').value.trim(),secret:$('#sy-sec').value.trim()}));updSync()}
+  else if(t.id==='ocr-file'){const f=t.files[0];t.value='';if(f)runOcr(f)}
   else if(t.id==='restore'){
     const f=t.files[0];if(!f)return;const r=new FileReader();
     r.onload=async()=>{try{const d=JSON.parse(r.result);if(!Array.isArray(d.tx)||!d.set||!d.tx.every(t=>t&&typeof t.id==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(t.date)&&(t.type==='expense'||t.type==='income')&&Number.isFinite(+t.amount)&&Number.isFinite(+t.updated)))throw 0;if(!(await ask('Khôi phục dữ liệu?',`Thay toàn bộ dữ liệu trên máy bằng ${d.tx.length} giao dịch trong file sao lưu.`,'Khôi phục',false)))return;S={tx:d.tx,set:Object.assign(defaults(),d.set),lastSync:0,lastPush:0};S.set.updated=Date.now();save();render();toast('Đã khôi phục',1);scheduleSync()}catch(err){toast('File sao lưu không hợp lệ')}finally{t.value=''}};
