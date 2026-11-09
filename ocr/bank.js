@@ -12,7 +12,12 @@ function cleanName(l){
   x=x.replace(/[\s_—–\-~.|]+$/,'').replace(/\s+(\d{4,}|Z{2,}[a-z]*)$/,'').trim();
   return x}
 const isName=l=>letters(l)>=3&&letters(l)>=String(l).replace(/\s/g,'').length*0.6;
-const STOP=/^(ma giao dich|cach thuc|danh muc|thuc hien lai|phi\b|dong\b|gui\b|chia se|xac nhan|tra soat|so du|thoi gian|chuyen luc|so tien|giao dich thanh cong)/;
+const STOP=/^(chuyen nhanh \d|luu mau|chia se|gan the|luu nguoi|ma giao dich|cach thuc|danh muc|thuc hien lai|phi\b|dong\b|gui\b|chia se|xac nhan|tra soat|so du|thoi gian|chuyen luc|so tien|giao dich thanh cong)/;
+const ALIAS=[[/wincommerce|winmart|\bwin\b/,'WinMart'],[/familymart/,'FamilyMart'],[/circle ?k/,'Circle K'],[/bach hoa xanh|bhx/,'Bách Hóa Xanh'],[/highlands?/,'Highlands Coffee'],[/vngames|vnggames|zion/,'VNG Games']];
+function short(x){
+  const f=fold(x);for(const [re,n] of ALIAS)if(re.test(f))return n;
+  const t=String(x).replace(/\b(cong ty|cty|co phan|tnhh|joint stock company|company|limited|general commercial services|services|jsc|corp)\b/gi,' ').replace(/\s+/g,' ').trim();
+  return title(t||x).split(' ').slice(0,5).join(' ').slice(0,40)}
 function cleanContent(s){
   return String(s).replace(/\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{10,}\b/g,' ').replace(/\d{2}:\d{2}:\d{2}/g,' ').replace(/-\d{6}-/g,' ').replace(/\s+/g,' ').replace(/^[\s\-]+|[\s\-]+$/g,'')}
 
@@ -63,24 +68,35 @@ function parse(text){
   if(acct){r.self=acct;r.payee=r.type==='income'?fromName:toName}
   else{r.self=fromName;r.payee=r.type==='income'?fromName:toName}
   if(r.type==='income'&&!acct&&toName){r.self=toName;r.payee=fromName}
+  if(!r.payee&&r.type==='expense'){
+    const ai=F.findIndex(f=>!/so du/.test(f)&&/\d[\d.,]*\s*vnd/.test(f));
+    if(ai>=0){const out=[];
+      for(let j=ai+1;j<Math.min(L.length,ai+5)&&out.length<3;j++){
+        const c=cleanName(L[j]);
+        if(/bank|\.{3}|^\W*$/.test(F[j])||/\d{4,}/.test(L[j])||STOP.test(F[j])||/^(loi nhan|noi dung)/.test(F[j])){if(out.length)break;continue}
+        if(ns(c)===ns(r.self)||/^(tu |toi |tai khoan|den\b)/.test(F[j-1]||'')){if(out.length)break;continue}
+        if(isName(c)&&c===c.toUpperCase())out.push(c);else if(out.length)break;
+      }
+      r.payee=out.join(' ');if(r.payee&&!r.self)r.self='';}
+  }
   // nội dung
-  const ci=F.findIndex(f=>/^noi dung/.test(f));
+  const ci=F.findIndex(f=>/^(noi dung|loi nhan)/.test(f));
   if(ci>=0){
     const parts=[];const first=L[ci].replace(/^[^:]*:\s*/,'');
     if(first!==L[ci]&&first&&!/^n[oô]i dung/i.test(first))parts.push(first);
-    for(let j=ci+1;j<L.length&&parts.length<4;j++){if(STOP.test(F[j]))break;parts.push(L[j])}
+    for(let j=ci+1;j<L.length&&parts.length<4;j++){if(STOP.test(F[j])||/\d{2}\/\d{2}\/20\d{2}/.test(L[j]))break;parts.push(L[j])}
     r.content=cleanContent(parts.join(' '));
   }
   r.internal=r.type==='expense'&&!!r.payee&&!!r.self&&ns(r.payee)===ns(r.self);
   if(r.internal){r.note='Chuyển giữa tài khoản của mình';r.warn.push('Có vẻ là chuyển giữa các tài khoản của chính bạn nên thường không tính là chi tiêu.')}
-  else r.note=title(r.payee||r.content).slice(0,60);
+  else r.note=short(r.payee||r.content);
   r.hay=fold([r.payee,r.content].join(' '));
   return r;
 }
 
 /* ---- gợi ý danh mục theo từ khóa ---- */
 const RULES=[
- ['expense',/familymart|circle ?k|winmart|bach hoa|coop|lotte ?mart|aeon|tap hoa|7.?eleven|ministop|siêu thị|sieu thi|big ?c|mart\b/,['Chợ & siêu thị']],
+ ['expense',/familymart|circle ?k|winmart|wincommerce|bach hoa|coop|lotte ?mart|aeon|tap hoa|7.?eleven|ministop|siêu thị|sieu thi|big ?c|mart\b/,['Chợ & siêu thị']],
  ['expense',/\bpho\b|bun |com |cafe|ca phe|tra sua|quan |nha hang|restaurant|kfc|lotteria|highland|starbucks|phuc long|banh|pizza|an uong|bbq|lau\b|grabfood|shopeefood|beamin/,['Ăn uống']],
  ['expense',/grab|xanh sm|gojek|be group|taxi|xang|petrolimex|vetc|bai xe|gui xe|ve may bay|vietjet|bamboo/,['Đi lại']],
  ['expense',/evn|tien dien|tien nuoc|sawaco|dien luc|gas\b/,['Điện nước']],
