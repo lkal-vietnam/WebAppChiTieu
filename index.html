@@ -309,9 +309,9 @@ const defaults=()=>({people:['Chồng','Vợ'],
   catInc:mk([['Lương','💼'],['Thưởng','🎉'],['Kinh doanh','🏪'],['Lãi & đầu tư','📈'],['Khác','💰']]),
   wallets:[{n:'Tiền mặt',open:0},{n:'Ngân hàng',open:0},{n:'Ví điện tử',open:0}],
   budgets:{},recurring:[],updated:0});
-function load(){try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&Array.isArray(s.tx)){s.set=Object.assign(defaults(),s.set||{});return s}}catch(e){}return {tx:[],set:defaults(),lastSync:0,lastPush:0}}
+function load(){const raw=localStorage.getItem(KEY);try{const s=JSON.parse(raw);if(s&&Array.isArray(s.tx)){s.set=Object.assign(defaults(),s.set||{});return s}}catch(e){if(raw){try{localStorage.setItem(KEY+'.bak',raw)}catch(_){}}}return {tx:[],set:defaults(),lastSync:0,lastPush:0}}
 let S=load();
-const save=()=>localStorage.setItem(KEY,JSON.stringify(S));
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('Không lưu được vào bộ nhớ máy (đầy hoặc bị chặn). Hãy xuất sao lưu.')}};
 const getSync=()=>{try{return JSON.parse(localStorage.getItem(SYNCKEY))||{url:'',secret:''}}catch(e){return {url:'',secret:''}}};
 
 /* ---------- dữ liệu ---------- */
@@ -499,7 +499,7 @@ async function download(name,text,mime){
   try{if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:name});return}}catch(e){if(e.name==='AbortError')return}
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
 }
-function csv(L){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+function csv(L){const q=v=>{let x=String(v??'');if(/^[=+\-@\t\r]/.test(x))x="'"+x;return '"'+x.replace(/"/g,'""')+'"'};
   return '﻿'+['Ngày,Loại,Số tiền,Danh mục,Ví,Người,Ghi chú',...[...L].sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[t.date,t.type==='income'?'Thu':'Chi',t.amount,q(t.cat),q(t.wallet),q(person(t.who)),q(t.note)].join(','))].join('\n')}
 
 /* ---------- Đồng bộ ---------- */
@@ -521,7 +521,7 @@ async function doSync(manual){
   try{
     const body={secret:cfg.secret,since:S.lastSync,txs:S.tx.filter(t=>t.updated>S.lastPush),settings:S.set.updated>S.lastPush?S.set:null};
     const r=await fetch(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body)});
-    const j=await r.json();if(!j.ok)throw new Error(j.error||'Lỗi không rõ');
+    let j;try{j=await r.json()}catch(_){throw new Error('Apps Script không trả dữ liệu hợp lệ. Hãy triển khai lại với quyền "Bất kỳ ai".')}if(!j.ok)throw new Error(j.error||'Lỗi không rõ');
     merge(j);S.lastPush=start;S.lastSync=Math.max(0,j.now-120000);save();
     syncErr='';setStatus('Đồng bộ lúc '+new Date().toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}));
     if(!fm&&!document.activeElement?.matches('input,select'))render();
@@ -625,7 +625,7 @@ document.addEventListener('change',e=>{
   else if(t.id==='sy-url'||t.id==='sy-sec'){localStorage.setItem(SYNCKEY,JSON.stringify({url:$('#sy-url').value.trim(),secret:$('#sy-sec').value.trim()}));updSync()}
   else if(t.id==='restore'){
     const f=t.files[0];if(!f)return;const r=new FileReader();
-    r.onload=async()=>{try{const d=JSON.parse(r.result);if(!Array.isArray(d.tx)||!d.set)throw 0;if(!(await ask('Khôi phục dữ liệu?',`Thay toàn bộ dữ liệu trên máy bằng ${d.tx.length} giao dịch trong file sao lưu.`,'Khôi phục',false)))return;S={tx:d.tx,set:Object.assign(defaults(),d.set),lastSync:0,lastPush:0};S.set.updated=Date.now();save();render();toast('Đã khôi phục',1);scheduleSync()}catch(err){toast('File sao lưu không hợp lệ')}finally{t.value=''}};
+    r.onload=async()=>{try{const d=JSON.parse(r.result);if(!Array.isArray(d.tx)||!d.set||!d.tx.every(t=>t&&typeof t.id==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(t.date)&&(t.type==='expense'||t.type==='income')&&Number.isFinite(+t.amount)&&Number.isFinite(+t.updated)))throw 0;if(!(await ask('Khôi phục dữ liệu?',`Thay toàn bộ dữ liệu trên máy bằng ${d.tx.length} giao dịch trong file sao lưu.`,'Khôi phục',false)))return;S={tx:d.tx,set:Object.assign(defaults(),d.set),lastSync:0,lastPush:0};S.set.updated=Date.now();save();render();toast('Đã khôi phục',1);scheduleSync()}catch(err){toast('File sao lưu không hợp lệ')}finally{t.value=''}};
     r.readAsText(f);
   }
 });
