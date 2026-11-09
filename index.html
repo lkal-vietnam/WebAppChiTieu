@@ -365,7 +365,7 @@ function vHome(){
    <div class="card"><div class="grid2"><div class="kpi"><small>Còn lại trong tháng</small><b class="${left<0?'neg':'inc'}">${cnt(left,'',' ₫')}</b></div>
    <div class="kpi"><small>Số giao dịch</small><b>${L.length}</b></div></div></div>
    ${bl?`<div class="card"><h3>Ngân sách tháng này</h3>${bl}</div>`:''}
-   <div class="card"><h3>Ví</h3>${S.set.wallets.map(w=>`<div class="row"><div class="ic" style="background:${catColor(w.n)}22">👛</div><div class="mid"><b>${esc(w.n)}</b></div><div class="amt">${money(walletBal(w))}</div></div>`).join('')||'<div class="empty">Chưa có ví</div>'}</div>
+   <div class="card"><h3>Ví</h3>${S.set.wallets.map(w=>`<div class="row"><div class="ic" style="background:${catColor(w.n)}22">👛</div><div class="mid"><b>${esc(w.n)}</b></div><div class="amt">${money(walletBal(w))}</div></div>`).join('')||'<div class="empty">Chưa có ví. Bấm "Thêm ví" bên dưới.</div>'}</div>
    <div class="card"><h3>Gần đây</h3>${recent||'<div class="empty"><div class="em">🌱</div><div>Chưa có giao dịch.<br>Bấm nút + để thêm.</div></div>'}</div>`;
 }
 
@@ -373,7 +373,7 @@ function vHome(){
 function listBody(){
   const q=ui.q.trim().toLowerCase();
   let L=(q?live():inMonth(ui.ym)).filter(t=>(ui.tw==='all'||t.who===ui.tw)&&(!q||(t.note+' '+t.cat+' '+t.wallet).toLowerCase().includes(q))).sort(cmpTx);
-  if(!L.length)return '<div class="empty">Không có giao dịch</div>';
+  if(!L.length)return '<div class="empty">Không tìm thấy giao dịch nào. Thử từ khóa hoặc bộ lọc khác.</div>';
   const g={};L.forEach(t=>(g[t.date]=g[t.date]||[]).push(t));
   const head=q?`<div class="hint" style="margin:10px 4px">Tìm trong tất cả các tháng: ${L.length} giao dịch · chi ${money(sum(L,'expense'))}${sum(L,'income')?' · thu '+money(sum(L,'income')):''}</div>`:'';
   return head+Object.keys(g).sort().reverse().map(d=>{const arr=g[d],day=new Date(d+'T00:00:00'),net=sum(arr,'income')-sum(arr,'expense');
@@ -390,7 +390,7 @@ function periodMonths(p,y,m){if(p==='year')return Array.from({length:12},(_,i)=>
 function shiftP(p,y,m,d){if(p==='year')return {y:y+d,m};let k=p==='quarter'?3*d:d;m+=k;while(m>12){m-=12;y++}while(m<1){m+=12;y--}return {y,m}}
 const pLabel=(p,y,m)=>p==='year'?`Năm ${y}`:p==='quarter'?`Quý ${Math.floor((m-1)/3)+1}/${y}`:`Tháng ${m}/${y}`;
 function calc(p,y,m,who){const ms=periodMonths(p,y,m);const L=live().filter(t=>ms.includes(t.date.slice(0,7))&&(who==='all'||t.who===who));return {ms,L,inc:sum(L,'income'),exp:sum(L,'expense')}}
-function donut(items){const tot=items.reduce((a,i)=>a+i.v,0);if(!tot)return '<div class="empty">Chưa có dữ liệu</div>';const R=42,C=2*Math.PI*R;let off=0;
+function donut(items){const tot=items.reduce((a,i)=>a+i.v,0);if(!tot)return '<div class="empty">Kỳ này chưa có giao dịch.</div>';const R=42,C=2*Math.PI*R;let off=0;
   const segs=items.map((i,k)=>{const l=i.v/tot*C;const s=`<circle r="${R}" cx="60" cy="60" fill="none" stroke="${i.c}" stroke-width="18" stroke-dasharray="${l} ${C-l}" stroke-dashoffset="${-off}" transform="rotate(-90 60 60)" style="--C:${C};animation-delay:${k*70}ms"/>`;off+=l;return s}).join('');
   return `<svg viewBox="0 0 120 120" class="donut">${segs}<text x="60" y="58" text-anchor="middle" class="dt1">Tổng chi</text><text x="60" y="71" text-anchor="middle" class="dt2">${short(tot)}</text></svg>`}
 function bars(g,mode){
@@ -488,7 +488,7 @@ async function runOcr(file){
       if(!r.items.length)throw new Error('Không thấy giao dịch nào trong ảnh.');
       fm.ocr=Object.assign(fm.ocr||{},{busy:false,warn:[],items:r.items,msg:'Ảnh có nhiều giao dịch. Chạm vào giao dịch muốn ghi:'});renderForm();
     }else applyOcr(r);
-  }catch(e){ocrMsg('Không đọc được ảnh: '+(e&&e.message||e),0);toast('Không đọc được ảnh')}
+  }catch(e){ocrMsg('Không đọc được ảnh: '+(e&&e.message||e),0);toast('Không đọc được ảnh. Thử ảnh rõ hơn hoặc nhập tay.')}
 }
 function renderForm(){
   const isRec=fm.mode==='rec',all=rankCats(fm.type),N=8,old=$('#panel .pbody'),st=old?old.scrollTop:0;
@@ -512,7 +512,7 @@ function renderForm(){
 function saveForm(){
   if(!(fm.amount>0))return toast('Nhập số tiền');
   if(!fm.cat)return toast('Chọn danh mục');
-  if(!fm.wallet)return toast('Cần ít nhất 1 ví (Cài đặt)');
+  if(!fm.wallet)return toast('Thêm ít nhất 1 ví trong tab Cài đặt');
   if(fm.mode==='rec'){
     const day=Math.min(31,Math.max(1,+fm.day||1));
     S.set.recurring.push({id:uid(),type:fm.type,amount:fm.amount,cat:fm.cat,wallet:fm.wallet,who:fm.who,note:fm.note,day,from:day>=NOW.getDate()?curYM():shiftYM(curYM(),1)});
@@ -552,8 +552,8 @@ function merge(j){
 }
 async function doSync(manual){
   const cfg=getSync();
-  if(!cfg.url||!cfg.secret){if(manual)toast('Chưa nhập link & mật khẩu đồng bộ');return}
-  if(!navigator.onLine){setStatus('Đang offline, sẽ gửi khi có mạng');return}
+  if(!cfg.url||!cfg.secret){if(manual)toast('Nhập link và mật khẩu đồng bộ ở tab Cài đặt');return}
+  if(!navigator.onLine){setStatus('Đang offline. Sẽ đồng bộ khi có mạng');return}
   if(syncing)return;syncing=true;setStatus('Đang đồng bộ…');const start=Date.now();
   try{
     const body={secret:cfg.secret,since:S.lastSync,txs:S.tx.filter(t=>t.updated>S.lastPush),settings:S.set.updated>S.lastPush?S.set:null};
@@ -635,7 +635,7 @@ document.addEventListener('click',async e=>{
     case 'backup':download(`chitieu-saoluu-${todayStr()}.json`,JSON.stringify(S),'application/json');break;
     case 'restoreBtn':$('#restore').click();break;
     case 'addWallet':{const r=await dlg({title:'Thêm ví',fields:[{label:'Tên ví',ph:'vd: Techcombank, MoMo'},{label:'Số dư hiện tại (₫)',money:1,value:0}]});if(!r)break;const n=r.vals[0];if(!n)return toast('Nhập tên ví');if(S.set.wallets.some(w=>w.n===n))return toast('Ví đã tồn tại');S.set.wallets.push({n,open:r.vals[1]});touchSet();render();break}
-    case 'delWallet':{const w=S.set.wallets[+v];if(S.tx.some(t=>t.wallet===w.n&&!t.deleted))return toast('Ví đã có giao dịch, không xóa được');if(await ask(`Xóa ví "${w.n}"?`,'Thao tác này không thể hoàn tác.')){S.set.wallets.splice(+v,1);touchSet();render()}break}
+    case 'delWallet':{const w=S.set.wallets[+v];if(S.tx.some(t=>t.wallet===w.n&&!t.deleted))return toast('Ví này đã có giao dịch nên không xóa được');if(await ask(`Xóa ví "${w.n}"?`,'Thao tác này không thể hoàn tác.')){S.set.wallets.splice(+v,1);touchSet();render()}break}
     case 'openBal':{const w=S.set.wallets[+v];const r=await dlg({title:`Số dư đầu của "${w.n}"`,msg:'Số tiền có sẵn trong ví trước khi bạn bắt đầu ghi chép.',fields:[{label:'Số dư đầu (₫)',money:1,value:w.open||0}]});if(!r)break;w.open=r.vals[0];touchSet();render();break}
     case 'addCat':{const r=await dlg({title:v==='income'?'Thêm danh mục thu':'Thêm danh mục chi',fields:[{label:'Tên danh mục',ph:'vd: Đồ ăn vặt'},{label:'Biểu tượng (emoji, tùy chọn)',ph:'🍕'}]});if(!r)break;const n=r.vals[0];if(!n)return toast('Nhập tên danh mục');if(cats(v).some(c=>c.n===n))return toast('Danh mục đã tồn tại');const m=r.vals[1].match(/\p{Extended_Pictographic}️?/u);cats(v).push({n,i:m?m[0]:'🏷️'});touchSet();render();break}
     case 'delCat':if(await ask(`Xóa danh mục "${id}"?`,'Các giao dịch cũ vẫn được giữ nguyên.')){const arr=cats(v);arr.splice(arr.findIndex(c=>c.n===id),1);touchSet();render()}break;
@@ -643,7 +643,7 @@ document.addEventListener('click',async e=>{
     case 'addRec':openForm(null,true);break;
     case 'delRec':if(await ask('Xóa giao dịch định kỳ này?','Các khoản đã được ghi trước đó vẫn giữ nguyên.')){S.set.recurring=S.set.recurring.filter(r=>r.id!==id);touchSet();render()}break;
     case 'syncNow':doSync(true);break;
-    case 'setPin':{const r=await dlg({title:'Đặt mã PIN',msg:'Mã gồm 4 chữ số, chỉ áp dụng cho máy này.',fields:[{label:'Mã PIN mới',pin:1}]});if(!r)break;if(!/^\d{4}$/.test(r.vals[0]))return toast('PIN phải đúng 4 chữ số');localStorage.setItem(PINKEY,await sha(r.vals[0]));toast('Đã đặt PIN',1);render();break}
+    case 'setPin':{const r=await dlg({title:'Đặt mã PIN',msg:'Mã gồm 4 chữ số, chỉ áp dụng cho máy này.',fields:[{label:'Mã PIN mới',pin:1}]});if(!r)break;if(!/^\d{4}$/.test(r.vals[0]))return toast('Nhập đúng 4 chữ số');localStorage.setItem(PINKEY,await sha(r.vals[0]));toast('Đã đặt PIN',1);render();break}
     case 'rmPin':if(await ask('Tắt mã PIN?','Ai cầm máy này cũng mở được app.','Tắt PIN')){localStorage.removeItem(PINKEY);render()}break;
     case 'pin':pinKey(v);break;
   }
@@ -665,7 +665,7 @@ document.addEventListener('change',e=>{
   else if(t.id==='ocr-file'){const f=t.files[0];t.value='';if(f)runOcr(f)}
   else if(t.id==='restore'){
     const f=t.files[0];if(!f)return;const r=new FileReader();
-    r.onload=async()=>{try{const d=JSON.parse(r.result);if(!Array.isArray(d.tx)||!d.set||!d.tx.every(t=>t&&typeof t.id==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(t.date)&&(t.type==='expense'||t.type==='income')&&Number.isFinite(+t.amount)&&Number.isFinite(+t.updated)))throw 0;if(!(await ask('Khôi phục dữ liệu?',`Thay toàn bộ dữ liệu trên máy bằng ${d.tx.length} giao dịch trong file sao lưu.`,'Khôi phục',false)))return;S={tx:d.tx,set:Object.assign(defaults(),d.set),lastSync:0,lastPush:0};S.set.updated=Date.now();save();render();toast('Đã khôi phục',1);scheduleSync()}catch(err){toast('File sao lưu không hợp lệ')}finally{t.value=''}};
+    r.onload=async()=>{try{const d=JSON.parse(r.result);if(!Array.isArray(d.tx)||!d.set||!d.tx.every(t=>t&&typeof t.id==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(t.date)&&(t.type==='expense'||t.type==='income')&&Number.isFinite(+t.amount)&&Number.isFinite(+t.updated)))throw 0;if(!(await ask('Khôi phục dữ liệu?',`Thay toàn bộ dữ liệu trên máy bằng ${d.tx.length} giao dịch trong file sao lưu.`,'Khôi phục',false)))return;S={tx:d.tx,set:Object.assign(defaults(),d.set),lastSync:0,lastPush:0};S.set.updated=Date.now();save();render();toast('Đã khôi phục',1);scheduleSync()}catch(err){toast('Không đọc được file sao lưu. Chọn file .json do app xuất ra.')}finally{t.value=''}};
     r.readAsText(f);
   }
 });
@@ -714,7 +714,7 @@ function updSync(){
 
 /* ---------- Biểu đồ thu/chi (chuyển đổi Chi | Thu & Chi) ---------- */
 let repCtx={p:'month',groups:[],has:false};
-function chartInner(){const c=repCtx;return `<div class="chd"><h3>${ui.cm==='exp'?'Chi':'Thu – chi'} theo ${c.p==='month'?'ngày':'tháng'}</h3><div class="seg sm"><button class="${ui.cm==='exp'?'on':''}" data-act="cm" data-v="exp">Chi</button><button class="${ui.cm==='both'?'on':''}" data-act="cm" data-v="both">Thu &amp; chi</button></div></div>${c.has?bars(c.groups,ui.cm):'<div class="empty">Chưa có dữ liệu</div>'}`}
+function chartInner(){const c=repCtx;return `<div class="chd"><h3>${ui.cm==='exp'?'Chi':'Thu – chi'} theo ${c.p==='month'?'ngày':'tháng'}</h3><div class="seg sm"><button class="${ui.cm==='exp'?'on':''}" data-act="cm" data-v="exp">Chi</button><button class="${ui.cm==='both'?'on':''}" data-act="cm" data-v="both">Thu &amp; chi</button></div></div>${c.has?bars(c.groups,ui.cm):'<div class="empty">Kỳ này chưa có giao dịch.</div>'}`}
 
 /* ---------- Bàn phím iOS che form: bám theo vùng nhìn thấy ---------- */
 function fitVV(){const vv=window.visualViewport;if(!vv)return;for(const id of ['sheet','dlg']){const e=document.getElementById(id);if(e&&e.classList.contains('on')){e.style.top=vv.offsetTop+'px';e.style.height=vv.height+'px';e.style.bottom='auto'}}}
