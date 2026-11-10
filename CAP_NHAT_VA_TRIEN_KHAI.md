@@ -12,7 +12,7 @@ Dành cho người sửa app. Có hai phần triển khai riêng: **app** (GitHu
 
 - [ ] Sao lưu dữ liệu: trên điện thoại, Cài đặt → **Sao lưu (JSON)**. Làm ít nhất trước mỗi lần đổi lớn.
 - [ ] Chạy bộ kiểm thử đầu cuối (40 bước) và bộ kiểm tra giao diện (tương phản, vùng chạm ≥44px, không tràn ngang). Tất cả phải đạt.
-- [ ] Nếu sửa `index.html`, `sw.js` hoặc thư mục `ocr/`: **tăng số phiên bản** trong `sw.js` (`const V='qltc-vN'`). Không tăng thì điện thoại có thể giữ bản cũ.
+- [ ] Nếu sửa `index.html`, `sw.js` hoặc thư mục `ocr/`: **tăng số phiên bản ở cả 3 chỗ cho giống nhau**: `sw.js` (`const V='qltc-vN'`), `index.html` (`const APP_VER='N'`) và `version.json` (`{"v":"N"}`). App tự so `version.json` mỗi lần mở lại để tự tải bản mới; quên tăng thì điện thoại có thể giữ bản cũ.
 - [ ] Nếu đổi cấu trúc dữ liệu giao dịch: kiểm tra `Code.gs` có ghi và đọc đúng cột mới (`id, date, type, amount, cat, wallet, who, note, updated, deleted`).
 - [ ] Không có file ảnh chụp thử hoặc tệp tạm trong thư mục kho.
 
@@ -24,7 +24,7 @@ Dành cho người sửa app. Có hai phần triển khai riêng: **app** (GitHu
 
 ## 3. Kiểm tra trên iPhone (khoảng 2 phút)
 
-- [ ] Đóng hẳn app (vuốt tắt) rồi mở lại. Nếu vẫn thấy giao diện cũ, đóng và mở thêm một lần.
+- [ ] Mở lại app: app tự tải bản mới (từ bản 11 trở đi). Nếu đang mở form thì sẽ hiện nút **Cập nhật**. Bản cũ hơn bản 11 cần đóng hẳn app một lần.
 - [ ] Bấm `+`, nhập số tiền, lưu: bàn phím không che nút Lưu.
 - [ ] "📷 Điền từ ảnh": chọn một ảnh chuyển khoản, số tiền, ngày và thu/chi điền đúng. Lần đầu cần mạng để tải bộ đọc (khoảng 6MB).
 - [ ] Các tab Tổng quan, Giao dịch, Báo cáo, Cài đặt hiển thị đủ chữ, không tràn.

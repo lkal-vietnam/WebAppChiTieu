@@ -321,6 +321,7 @@ const defaults=()=>({people:['Chồng','Vợ'],
   budgets:{},recurring:[],funds:[],updated:0});
 function load(){const raw=localStorage.getItem(KEY);try{const s=JSON.parse(raw);if(s&&Array.isArray(s.tx)){s.set=Object.assign(defaults(),s.set||{});return s}}catch(e){if(raw){try{localStorage.setItem(KEY+'.bak',raw)}catch(_){}}}return {tx:[],set:defaults(),lastSync:0,lastPush:0}}
 let S=load();
+queueMicrotask(()=>{ensureMt(S.set);snapBase()});
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('Không lưu được vào bộ nhớ máy (đầy hoặc bị chặn). Hãy xuất sao lưu.')}};
 const getSync=()=>{try{return JSON.parse(localStorage.getItem(SYNCKEY))||{url:'',secret:''}}catch(e){return {url:'',secret:''}}};
 
@@ -334,7 +335,8 @@ const sum=(L,type)=>L.filter(t=>t.type===type).reduce((a,t)=>a+t.amount,0);
 const inMonth=ym=>live().filter(t=>t.date.startsWith(ym));
 const walletBal=w=>{let b=w.open||0;for(const t of live()){if(t.type==='fund')continue;if(t.wallet===w.n)b+=t.type==='income'?t.amount:-t.amount;if(t.type==='transfer'&&t.cat===w.n)b+=t.amount}return b};
 /* ---------- Quỹ: phần tiền dành riêng cho một việc (chỉ ghi sổ, tiền vẫn nằm trong ví) ---------- */
-const funds=()=>S.set.funds||(S.set.funds=[]);
+const allFunds=()=>S.set.funds||(S.set.funds=[]);
+const funds=()=>allFunds().filter(f=>!f.deleted);
 const fundById=id=>funds().find(f=>f.id===id);
 /* Cấu hình quỹ theo từng giai đoạn: mỗi lần đổi mức cấp/danh mục/cách tính chỉ áp dụng từ tháng đổi trở đi. */
 const fundHist=f=>f.hist&&f.hist.length?f.hist:[{from:f.from,monthly:f.monthly||0,cats:f.cats||[],mode:f.mode||'acc'}];
@@ -361,7 +363,36 @@ function fundMonth(f,ym,skip){
 }
 const fundAlloc=()=>funds().reduce((a,f)=>{const s=fundMonth(f,curYM());return a+(s?Math.max(0,s.left):0)},0);
 function upsertTx(t){t.updated=Date.now();const i=S.tx.findIndex(x=>x.id===t.id);if(i>=0)S.tx[i]=t;else S.tx.push(t);save();scheduleSync()}
-function touchSet(){S.set.updated=Date.now();save();scheduleSync()}
+/* Cài đặt đồng bộ theo từng phần (tên, danh mục, ví, ngân sách, định kỳ) và từng quỹ,
+   để hai máy sửa khác chỗ cùng lúc không ghi đè nhau. */
+const SF=['people','catExp','catInc','wallets','budgets','recurring'];
+let setBase={};
+const fKey=f=>JSON.stringify({...f,updated:0});
+/* Bản cài đặt cũ chưa có dấu thời gian từng phần: lấy thời điểm sửa chung làm mốc. */
+function ensureMt(x){const u=x.updated||0,mt=x.mt||(x.mt={});for(const k of SF)if(!(k in mt))mt[k]=u;for(const f of x.funds||[])if(!f.updated)f.updated=u;return x}
+function snapBase(){setBase={};for(const k of SF)setBase[k]=JSON.stringify(S.set[k]);for(const f of allFunds())setBase['f:'+f.id]=fKey(f)}
+function stampSet(now){
+  const mt=S.set.mt||(S.set.mt={});
+  for(const k of SF){const j=JSON.stringify(S.set[k]);if(setBase[k]!==j){mt[k]=now;setBase[k]=j}}
+  for(const f of allFunds()){const j=fKey(f);if(setBase['f:'+f.id]!==j){f.updated=now;setBase['f:'+f.id]=j}}
+}
+function touchSet(){const now=Date.now();stampSet(now);S.set.updated=now;save();scheduleSync()}
+/* Gộp cài đặt từ máy kia: mỗi phần lấy bên sửa sau; quỹ gộp theo từng quỹ. Trả về true nếu bản gộp khác bản trên máy chủ. */
+function mergeSet(r){
+  ensureMt(r);ensureMt(S.set);const L=S.set,lm=L.mt,rm=r.mt,lu=L.updated||0,ru=r.updated||0,o=Object.assign(defaults(),L,{mt:{...lm}});
+  let differs=false;
+  for(const k of SF){
+    if(r[k]===undefined){differs=true;continue}
+    const lt=lm[k],rt=rm[k];
+    if(rt>lt){o[k]=r[k];o.mt[k]=rt}else if(JSON.stringify(L[k])!==JSON.stringify(r[k]))differs=true;
+  }
+  const map=new Map();
+  for(const f of r.funds||[])map.set(f.id,f);
+  for(const f of L.funds||[]){const x=map.get(f.id);if(!x||f.updated>x.updated){map.set(f.id,f);if(!x||fKey(f)!==fKey(x))differs=true}}
+  o.funds=[...map.values()];
+  o.updated=Math.max(lu,ru);
+  S.set=o;snapBase();return differs;
+}
 
 function runRecurring(){
   const now=new Date(),cy=now.getFullYear(),cm=now.getMonth()+1,td=now.getDate();let ch=false;
@@ -649,7 +680,6 @@ function merge(j){
   const m=new Map(S.tx.map(t=>[t.id,t]));
   for(const t of j.txs||[]){const o=m.get(t.id);if(!o||t.updated>o.updated)m.set(t.id,{id:String(t.id),date:t.date,type:t.type,amount:+t.amount,cat:t.cat,wallet:t.wallet,who:+t.who||0,note:t.note||'',updated:+t.updated,deleted:t.deleted===true||t.deleted==='TRUE'||t.deleted==='true'})}
   S.tx=[...m.values()];
-  if(j.settings&&j.settings.updated>S.set.updated){const keep=!('funds' in j.settings)&&S.set.funds;S.set=Object.assign(defaults(),j.settings);if(keep)S.set.funds=keep}
 }
 async function doSync(manual){
   const cfg=getSync();
@@ -657,10 +687,18 @@ async function doSync(manual){
   if(!navigator.onLine){setStatus('Đang offline. Sẽ đồng bộ khi có mạng');return}
   if(syncing)return;syncing=true;setStatus('Đang đồng bộ…');const start=Date.now();
   try{
-    const body={secret:cfg.secret,since:S.lastSync,txs:S.tx.filter(t=>t.updated>S.lastPush),settings:S.set.updated>S.lastPush?S.set:null};
-    const r=await fetch(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body)});
-    let j;try{j=await r.json()}catch(_){throw new Error('Apps Script không trả dữ liệu hợp lệ. Hãy triển khai lại với quyền "Bất kỳ ai".')}if(!j.ok)throw new Error(j.error||'Lỗi không rõ');
-    merge(j);S.lastPush=start;S.lastSync=Math.max(0,j.now-120000);save();
+    const call=async body=>{const r=await fetch(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body)});
+      let j;try{j=await r.json()}catch(_){throw new Error('Apps Script không trả dữ liệu hợp lệ. Hãy triển khai lại với quyền "Bất kỳ ai".')}if(!j.ok)throw new Error(j.error||'Lỗi không rõ');return j};
+    const dirty=setDirty();
+    // 1) Gửi giao dịch mới, nhận về giao dịch + cài đặt hiện có trên Sheet
+    const j=await call({secret:cfg.secret,since:S.lastSync,txs:S.tx.filter(t=>t.updated>S.lastPush),settings:null});
+    merge(j);
+    // 2) Gộp cài đặt theo từng phần; nếu máy này có thay đổi máy kia chưa có thì gửi bản đã gộp
+    const differs=j.settings?mergeSet(j.settings):S.set.updated>0;
+    if(dirty||differs){if(differs||!j.settings){S.set.updated=Math.max(Date.now(),(j.settings&&j.settings.updated||0)+1)}
+      }
+    const ver=S.set.updated;if(differs)await call({secret:cfg.secret,since:Date.now(),txs:[],settings:S.set});
+    S.setPushed=ver;S.lastPush=start;S.lastSync=Math.max(0,j.now-120000);save();
     syncErr='';setStatus('Đồng bộ lúc '+new Date().toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}));
     if(!fm&&!document.activeElement?.matches('input,select'))render();
     if(manual)toast('Đồng bộ xong',1);
@@ -736,11 +774,11 @@ document.addEventListener('click',async e=>{
     case 'fdNewCat':{const n=fd.n.trim();if(n&&!S.set.catExp.some(c=>c.n===n)){S.set.catExp.push({n,i:fd.i});if(!fd.cats.includes(n))fd.cats.push(n);touchSet()}renderFund();break}
     case 'fdSave':{const n=fd.n.trim();if(!n)return toast('Nhập tên quỹ');if(funds().some(f=>f.id!==fd.id&&f.n===n))return toast('Đã có quỹ tên này');
       const o={id:fd.id||uid(),n,i:fd.i,monthly:fd.monthly||0,mode:fd.mode,cats:fd.cats.filter(c=>S.set.catExp.some(x=>x.n===c)&&!funds().some(f=>f.id!==fd.id&&(f.cats||[]).includes(c))),open:fd.mode==='reset'?0:(fd.open||0),from:fd.from||curYM()};
-      const L=funds(),k=L.findIndex(f=>f.id===o.id),now=curYM(),cur={from:now,monthly:o.monthly,cats:o.cats,mode:o.mode};
+      const L=allFunds(),k=L.findIndex(f=>f.id===o.id),now=curYM(),cur={from:now,monthly:o.monthly,cats:o.cats,mode:o.mode};
       if(k<0)o.hist=[cur];else{const H=fundHist(L[k]),eff=fundCfg(L[k],now),same=eff.monthly===cur.monthly&&eff.mode===cur.mode&&[...eff.cats].sort().join('|')===[...cur.cats].sort().join('|');
         o.hist=same?H:[...H.filter(h=>h.from<now),cur];if(o.hist[0].from>o.from)o.hist[0]={...o.hist[0],from:o.from}}
       if(k>=0)L[k]=o;else L.push(o);touchSet();closeForm();render();toast(k>=0?'Đã lưu quỹ':`Đã tạo quỹ ${n}`,1);break}
-    case 'fdDel':{const f=fundById(fd.id);if(f&&await ask(`Xóa quỹ "${f.n}"?`,'Các giao dịch vẫn giữ nguyên, chỉ bỏ phần ghi sổ của quỹ.')){S.set.funds=funds().filter(x=>x.id!==f.id);touchSet();closeForm();render();toast('Đã xóa quỹ',1)}break}
+    case 'fdDel':{const f=fundById(fd.id);if(f&&await ask(`Xóa quỹ "${f.n}"?`,'Các giao dịch vẫn giữ nguyên, chỉ bỏ phần ghi sổ của quỹ.')){f.deleted=true;touchSet();closeForm();render();toast('Đã xóa quỹ',1)}break}
     case 'fundTx':{const f=fundById(id);if(!f)break;const st=fundMonth(f,curYM());
       const r=await dlg({title:`${f.i} Quỹ ${f.n}`,msg:`Hiện còn ${fmt(st?st.left:0)} đ. Nạp thêm hoặc rút bớt chỉ ghi sổ quỹ, không đổi số dư ví.`,fields:[{label:'Số tiền (đ)',money:1},{label:'Ghi chú (tùy chọn)',ph:'vd: thưởng Tết'}],ok:'Nạp thêm',extra:'Rút bớt',extraCls:''});
       if(!r)break;const amt=r.vals[0];if(!(amt>0))return toast('Nhập số tiền');
@@ -788,7 +826,7 @@ document.addEventListener('change',e=>{
   else if(t.id==='ocr-file'){const f=t.files[0];t.value='';if(f)runOcr(f)}
   else if(t.id==='restore'){
     const f=t.files[0];if(!f)return;const r=new FileReader();
-    r.onload=async()=>{try{const d=JSON.parse(r.result);if(!Array.isArray(d.tx)||!d.set||!d.tx.every(t=>t&&typeof t.id==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(t.date)&&['expense','income','transfer','fund'].includes(t.type)&&Number.isFinite(+t.amount)&&Number.isFinite(+t.updated)))throw 0;if(!(await ask('Khôi phục dữ liệu?',`Thay toàn bộ dữ liệu trên máy bằng ${d.tx.length} giao dịch trong file sao lưu.`,'Khôi phục',false)))return;S={tx:d.tx,set:Object.assign(defaults(),d.set),lastSync:0,lastPush:0};S.set.updated=Date.now();save();render();toast('Đã khôi phục',1);scheduleSync()}catch(err){toast('Không đọc được file sao lưu. Chọn file .json do app xuất ra.')}finally{t.value=''}};
+    r.onload=async()=>{try{const d=JSON.parse(r.result);if(!Array.isArray(d.tx)||!d.set||!d.tx.every(t=>t&&typeof t.id==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(t.date)&&['expense','income','transfer','fund'].includes(t.type)&&Number.isFinite(+t.amount)&&Number.isFinite(+t.updated)))throw 0;if(!(await ask('Khôi phục dữ liệu?',`Thay toàn bộ dữ liệu trên máy bằng ${d.tx.length} giao dịch trong file sao lưu.`,'Khôi phục',false)))return;S={tx:d.tx,set:Object.assign(defaults(),d.set),lastSync:0,lastPush:0};{const now=Date.now();S.set.updated=now;S.set.mt=Object.fromEntries(SF.map(k=>[k,now]));allFunds().forEach(f=>f.updated=now);snapBase()}save();render();toast('Đã khôi phục',1);scheduleSync()}catch(err){toast('Không đọc được file sao lưu. Chọn file .json do app xuất ra.')}finally{t.value=''}};
     r.readAsText(f);
   }
 });
@@ -824,7 +862,8 @@ async function welcome(){
 
 /* ---------- Trạng thái đồng bộ ---------- */
 let syncErr='';
-const pending=()=>S.tx.filter(t=>t.updated>S.lastPush).length+(S.set.updated>S.lastPush?1:0);
+const setDirty=()=>S.set.updated>Math.max(S.lastPush,S.setPushed||0);
+const pending=()=>S.tx.filter(t=>t.updated>S.lastPush).length+(setDirty()?1:0);
 function updSync(){
   const e=$('#sync');if(!e)return;const c=getSync();let cls,txt;
   if(!c.url||!c.secret){cls='off';txt='Chưa nối Sheet'}
@@ -845,6 +884,20 @@ if(window.visualViewport){visualViewport.addEventListener('resize',fitVV);visual
 
 /* ---------- Khởi động ---------- */
 if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
+/* ---------- Tự cập nhật: iPhone hay giữ app cũ trong bộ nhớ, nên mỗi lần mở lại app thì kiểm tra bản mới ---------- */
+const APP_VER='11';
+async function checkUpdate(){
+  if(!navigator.onLine||!location.protocol.startsWith('http'))return;
+  try{
+    const j=await (await fetch('version.json',{cache:'no-store'})).json();if(!j||!j.v||j.v===APP_VER)return;
+    const reg=navigator.serviceWorker&&await navigator.serviceWorker.getRegistration();if(reg)await reg.update().catch(()=>{});
+    const busy=$('#sheet').classList.contains('on')||$('#dlg').classList.contains('on')||$('#lock').classList.contains('on');
+    if(!busy&&sessionStorage.getItem('qltc.rl')!==j.v){sessionStorage.setItem('qltc.rl',j.v);location.reload();return}
+    toast('Đã có bản mới của app',0,{label:'Cập nhật',fn:()=>location.reload()});
+  }catch(e){}
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkUpdate()});
+setTimeout(checkUpdate,3000);
 showLock();runRecurring();render(true);updSync();doSync(false);welcome();
 window.addEventListener('online',()=>doSync(false));
 
