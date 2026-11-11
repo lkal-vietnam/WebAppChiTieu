@@ -387,9 +387,34 @@ function budgetMonth(ym){
   const amt=rows.reduce((a,r)=>a+r.amt,0),spent=rows.reduce((a,r)=>a+r.spent,0);
   return {rows,amt,spent,left:amt-spent,out};
 }
+/* Nhật ký đổi tên danh mục (đồng bộ giữa 2 máy). Máy nhận được sẽ tự đổi theo,
+   kể cả giao dịch nó vừa ghi bằng tên cũ hoặc danh sách danh mục bị máy kia ghi đè. */
+const allRen=()=>S.set.renames||(S.set.renames=[]);
+function renameMap(type){
+  const M={};
+  for(const r of allRen().filter(r=>!r.deleted&&r.type===type).sort((a,b)=>a.at-b.at)){for(const k in M)if(M[k]===r.from)M[k]=r.to;M[r.from]=r.to;M[r.to]=r.to}
+  for(const k in M)if(M[k]===k)delete M[k];return M;
+}
+function applyRenames(){
+  let setCh=false,txCh=0;const now=Date.now();
+  for(const type of ['expense','income']){
+    const M=renameMap(type);if(!Object.keys(M).length)continue;const L=cats(type);
+    for(let i=L.length-1;i>=0;i--){const t=M[L[i].n];if(!t)continue;if(L.some(x=>x.n===t))L.splice(i,1);else L[i].n=t;setCh=true}
+    for(const x of S.tx)if(!x.deleted&&x.type===type&&M[x.cat]){x.cat=M[x.cat];x.updated=now;txCh++}
+    for(const r of S.set.recurring)if(r.type===type&&M[r.cat]){r.cat=M[r.cat];setCh=true}
+    if(type==='expense'){
+      const rp=a=>{let c=false;const o=(a||[]).map(x=>M[x]?(c=true,M[x]):x);return [o,c]};
+      for(const f of [...allFunds(),...allBL()]){const [a,c]=rp(f.cats);if(c){f.cats=a;setCh=true}
+        if(f.hist)f.hist=f.hist.map(h=>{const [a2,c2]=rp(h.cats);if(c2)setCh=true;return c2?{...h,cats:a2}:h})}
+      for(const k of Object.keys(S.set.budgets||{}))if(M[k]){S.set.budgets[M[k]]=S.set.budgets[k];delete S.set.budgets[k];setCh=true}
+    }
+  }
+  return {setCh,txCh};
+}
 /* Đổi tên danh mục: đổi luôn trong giao dịch, giao dịch định kỳ, quỹ và ngân sách. Trả về số giao dịch đã đổi. */
 function renameCat(type,o,n){
   if(o===n)return 0;const c=cats(type).find(x=>x.n===o);if(!c)return 0;c.n=n;
+  allRen().push({id:uid(),type,from:o,to:n,at:Date.now()});
   const now=Date.now();let k=0;
   for(const t of S.tx)if(!t.deleted&&t.type===type&&t.cat===o){t.cat=n;t.updated=now;k++}
   for(const r of S.set.recurring)if(r.type===type&&r.cat===o)r.cat=n;
@@ -407,7 +432,7 @@ function upsertTx(t){t.updated=Date.now();const i=S.tx.findIndex(x=>x.id===t.id)
 const SF=['people','catExp','catInc','wallets','budgets','recurring'];
 let setBase={};
 const fKey=f=>JSON.stringify({...f,updated:0});
-const IL=['funds','blines'];
+const IL=['funds','blines','renames'];
 /* Bản cài đặt cũ chưa có dấu thời gian từng phần: lấy thời điểm sửa chung làm mốc. */
 function ensureMt(x){const u=x.updated||0,mt=x.mt||(x.mt={});for(const k of SF)if(!(k in mt))mt[k]=u;for(const k of IL)for(const f of x[k]||[])if(!f.updated)f.updated=u;return x}
 function snapBase(){setBase={};for(const k of SF)setBase[k]=JSON.stringify(S.set[k]);for(const k of IL)for(const f of S.set[k]||[])setBase[k+':'+f.id]=fKey(f)}
@@ -784,7 +809,8 @@ async function doSync(manual){
     const j=await call({secret:cfg.secret,since:S.lastSync,txs:S.tx.filter(t=>t.updated>S.lastPush),settings:null});
     merge(j);
     // 2) Gộp cài đặt theo từng phần; nếu máy này có thay đổi máy kia chưa có thì gửi bản đã gộp
-    const differs=j.settings?mergeSet(j.settings):S.set.updated>0;
+    let differs=j.settings?mergeSet(j.settings):S.set.updated>0;
+    const ar=applyRenames();if(ar.setCh){stampSet(Date.now());differs=true}if(ar.txCh)setTimeout(scheduleSync,0);
     if(dirty||differs){if(differs||!j.settings){S.set.updated=Math.max(Date.now(),(j.settings&&j.settings.updated||0)+1)}
       }
     const ver=S.set.updated;if(differs)await call({secret:cfg.secret,since:Date.now(),txs:[],settings:S.set});
@@ -903,7 +929,7 @@ document.addEventListener('click',async e=>{
     case 'addWallet':{const r=await dlg({title:'Thêm ví',fields:[{label:'Tên ví',ph:'vd: Techcombank, MoMo'},{label:'Số dư hiện tại (đ)',money:1,value:0}]});if(!r)break;const n=r.vals[0];if(!n)return toast('Nhập tên ví');if(S.set.wallets.some(w=>w.n===n))return toast('Ví đã tồn tại');S.set.wallets.push({n,open:r.vals[1]});touchSet();render();break}
     case 'delWallet':{const w=S.set.wallets[+v];if(S.tx.some(t=>!t.deleted&&(t.wallet===w.n||(t.type==='transfer'&&t.cat===w.n))))return toast('Ví này đã có giao dịch nên không xóa được');if(await ask(`Xóa ví "${w.n}"?`,'Thao tác này không thể hoàn tác.')){S.set.wallets.splice(+v,1);touchSet();render()}break}
     case 'openBal':{const w=S.set.wallets[+v];const r=await dlg({title:`Số dư đầu của "${w.n}"`,msg:'Số tiền có sẵn trong ví trước khi bạn bắt đầu ghi chép.',fields:[{label:'Số dư đầu (đ)',money:1,value:w.open||0}]});if(!r)break;w.open=r.vals[0];touchSet();render();break}
-    case 'addCat':{const r=await dlg({title:v==='income'?'Thêm danh mục thu':'Thêm danh mục chi',fields:[{label:'Tên danh mục',ph:'vd: Đồ ăn vặt'},{label:'Biểu tượng (emoji, tùy chọn)',ph:'🍕'}]});if(!r)break;const n=r.vals[0];if(!n)return toast('Nhập tên danh mục');if(cats(v).some(c=>c.n===n))return toast('Danh mục đã tồn tại');const m=r.vals[1].match(/\p{Extended_Pictographic}️?/u);cats(v).push({n,i:m?m[0]:'🏷️'});touchSet();render();break}
+    case 'addCat':{const r=await dlg({title:v==='income'?'Thêm danh mục thu':'Thêm danh mục chi',fields:[{label:'Tên danh mục',ph:'vd: Đồ ăn vặt'},{label:'Biểu tượng (emoji, tùy chọn)',ph:'🍕'}]});if(!r)break;const n=r.vals[0];if(!n)return toast('Nhập tên danh mục');if(cats(v).some(c=>c.n===n))return toast('Danh mục đã tồn tại');const m=r.vals[1].match(/\p{Extended_Pictographic}️?/u);cats(v).push({n,i:m?m[0]:'🏷️'});allRen().forEach(x=>{if(x.type===v&&x.from===n)x.deleted=true});touchSet();render();break}
     case 'delCat':if(await ask(`Xóa danh mục "${id}"?`,'Các giao dịch cũ vẫn được giữ nguyên.')){const arr=cats(v);arr.splice(arr.findIndex(c=>c.n===id),1);touchSet();render()}break;
     case 'addRec':openForm(null,true);break;
     case 'delRec':if(await ask('Xóa giao dịch định kỳ này?','Các khoản đã được ghi trước đó vẫn giữ nguyên.')){S.set.recurring=S.set.recurring.filter(r=>r.id!==id);touchSet();render()}break;
@@ -994,7 +1020,7 @@ if(window.visualViewport){visualViewport.addEventListener('resize',fitVV);visual
 /* ---------- Khởi động ---------- */
 if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 /* ---------- Tự cập nhật: iPhone hay giữ app cũ trong bộ nhớ, nên mỗi lần mở lại app thì kiểm tra bản mới ---------- */
-const APP_VER='12';
+const APP_VER='13';
 async function checkUpdate(){
   if(!navigator.onLine||!location.protocol.startsWith('http'))return;
   try{
@@ -1007,7 +1033,7 @@ async function checkUpdate(){
 }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkUpdate()});
 setTimeout(checkUpdate,3000);
-ensureMt(S.set);migrateBudgets();snapBase();
+ensureMt(S.set);migrateBudgets();snapBase();if(applyRenames().setCh)touchSet();
 showLock();runRecurring();render(true);updSync();doSync(false);welcome();
 window.addEventListener('online',()=>doSync(false));
 
